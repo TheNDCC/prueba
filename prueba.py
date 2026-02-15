@@ -13,14 +13,16 @@ PRECIOS = {
     "pollo asado medio": 150,
     "medio pollo asado": 150,
     "pollo rostizado entero": 340,
-    "Pollo Rostizado Medio": 170,       
+    "pollo rostizado medio": 170,
     "Nachos Supremos de Res": 150,  
     "Nachos Supremos Mixtos": 250,
     "Alitas Rostizada 2 Libras": 240,
+    "Alitas Rostizada 2 Libras": 240,
+    "Alitas Rostizada 1 Libra": 120,
     "puyazo": 200,
     "churrasco": 200,   
     "cerdo asado": 160,
-    "carne asada": 180,
+    "carne asada": 180,     
 
     "gaseosa 355 ml": 30,
 
