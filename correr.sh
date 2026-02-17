@@ -26,7 +26,7 @@ else
 fi
 
 # Ejecutar el programa (pasa cualquier argumento recibido)
-"$PY" prueba.py "$@"
+"$PY" peya.py "$@"
 
 # Pausa similar a "pause" de Windows
 read -n1 -rsp $'Presione cualquier tecla para continuar...\n' || true
