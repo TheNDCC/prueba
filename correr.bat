@@ -6,7 +6,7 @@ REM Activar entorno virtual
 call .env\Scripts\activate.bat
 
 REM Ejecutar el programa
-python prueba.py
+python peya.py
 
 REM Esperar para ver mensajes antes de cerrar
 pause
