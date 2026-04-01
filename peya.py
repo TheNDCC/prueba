@@ -40,12 +40,12 @@ COLUMN_WIDTHS = [18, 16, 25, 10, 18, 15, 12]
 # ==========================
 
 PRECIOS = {
-    "pollo asado entero": 320,
-    "pollo asados entero": 320,
-    "pollo asado medio": 160,
-    "medio pollo asado": 160,
-    "pollo rostizado entero": 360,
-    "pollo rostizado medio": 180,
+    "pollo asado entero": 340,
+    "pollo asados entero": 340,
+    "pollo asado medio": 170,
+    "medio pollo asado": 170,
+    "pollo rostizado entero": 380,
+    "pollo rostizado medio": 190,
     "nachos supremos de res": 150,
     "nachos supremos mixtos": 250,
     "alitas rostizada 2 libras": 240,
