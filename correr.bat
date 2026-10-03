@@ -1,12 +1,15 @@
 @echo off
-REM Cambiar a la carpeta del proyecto (opcional)
-cd /d "C:\Users\Nelson\Documents\repositorio\prueba"
+title Procesador PedidosYa - Pollos KM9
+cd /d "%~dp0"
 
-REM Activar entorno virtual
-call .env\Scripts\activate.bat
-
-REM Ejecutar el programa
-python peya.py
-
-REM Esperar para ver mensajes antes de cerrar
-pause
+if exist peya.exe (
+    start "" peya.exe
+) else (
+    echo.
+    echo No se encontro peya.exe en esta carpeta.
+    echo.
+    echo Si tiene el codigo fuente, ejecute build.bat para compilarlo.
+    echo Si tiene peya.exe, asegurese de que esta en la misma carpeta
+    echo que correr.bat.
+    echo.
+)

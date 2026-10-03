@@ -1,10 +1,9 @@
 import io
 import os
 import re
-import subprocess
 import tkinter as tk
 import unicodedata
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 import matplotlib
 import pandas as pd
@@ -143,79 +142,64 @@ def _parse_articulos(articulos: str) -> list[tuple[int, str]]:
     return items
 
 
-def copiar_tabla_al_portapapeles(detalle: pd.DataFrame):
-    """Genera una imagen de la tabla y la copia al portapapeles."""
-    try:
-        total = detalle["Subtotal (C$)"].sum(skipna=True)
+def _generar_imagen_tabla(detalle: pd.DataFrame) -> Image.Image:
+    """Genera una imagen PIL con la tabla Detalle + fila TOTAL."""
+    total = detalle["Subtotal (C$)"].sum(skipna=True)
 
-        df_con_total = pd.concat(
-            [
-                detalle,
-                pd.DataFrame(
-                    [
-                        ["TOTAL", "", "", "", "", total, ""],
-                    ],
-                    columns=detalle.columns,
-                ),
-            ],
-            ignore_index=True,
-        )
+    df_con_total = pd.concat(
+        [
+            detalle,
+            pd.DataFrame(
+                [["TOTAL", "", "", "", "", total, ""]],
+                columns=detalle.columns,
+            ),
+        ],
+        ignore_index=True,
+    )
 
-        fig, ax = plt.subplots(figsize=(14, max(3, len(df_con_total) * 0.5)))
-        ax.axis("off")
+    fig, ax = plt.subplots(figsize=(14, max(3, len(df_con_total) * 0.5)))
+    ax.axis("off")
 
-        tabla = ax.table(
-            cellText=df_con_total.values,
-            colLabels=df_con_total.columns,
-            cellLoc="center",
-            loc="center",
-            colColours=["#4472C4"] * len(df_con_total.columns),
-        )
+    tabla = ax.table(
+        cellText=df_con_total.values,
+        colLabels=df_con_total.columns,
+        cellLoc="center",
+        loc="center",
+        colColours=["#4472C4"] * len(df_con_total.columns),
+    )
+    tabla.auto_set_font_size(False)
+    tabla.set_fontsize(9)
+    tabla.scale(1.2, 1.5)
 
-        tabla.auto_set_font_size(False)
-        tabla.set_fontsize(9)
-        tabla.scale(1.2, 1.5)
+    num_filas = len(df_con_total)
+    for key, cell in tabla.get_celld().items():
+        if key[0] == 0:
+            cell.set_text_props(color="white", fontweight="bold")
+        elif key[0] == num_filas:
+            cell.set_facecolor("#D9E2F3")
+            cell.set_text_props(fontweight="bold")
+        cell.set_edgecolor("#cccccc")
 
-        num_filas = len(df_con_total)
-        for key, cell in tabla.get_celld().items():
-            if key[0] == 0:
-                cell.set_text_props(color="white", fontweight="bold")
-            elif key[0] == num_filas:
-                cell.set_facecolor("#D9E2F3")
-                cell.set_text_props(fontweight="bold")
-            cell.set_edgecolor("#cccccc")
+    plt.tight_layout()
 
-        plt.tight_layout()
+    img_buffer = io.BytesIO()
+    plt.savefig(
+        img_buffer,
+        format="png",
+        dpi=150,
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+    )
+    plt.close(fig)
 
-        img_buffer = io.BytesIO()
-        plt.savefig(
-            img_buffer,
-            format="png",
-            dpi=150,
-            bbox_inches="tight",
-            facecolor="white",
-            edgecolor="none",
-        )
-        plt.close(fig)
+    img_buffer.seek(0)
+    return Image.open(img_buffer)
 
-        img_buffer.seek(0)
-        imagen = Image.open(img_buffer)
 
-        temp_path = "/tmp/tabla_pedidosya.png"
-        imagen.save(temp_path)
-
-        subprocess.run(
-            ["xclip", "-selection", "clipboard", "-t", "image/png", "-i", temp_path],
-            check=True,
-        )
-
-        return True
-    except Exception as e:
-        messagebox.showwarning(
-            "Advertencia",
-            f"Excel generado correctamente, pero no se pudo copiar la imagen al portapapeles:\n{str(e)}",
-        )
-        return False
+def guardar_tabla_como_jpg(imagen: Image.Image, output_path: str) -> None:
+    """Guarda la imagen de la tabla como JPG (sobrescribe sin aviso)."""
+    imagen.convert("RGB").save(output_path, format="JPEG", quality=95)
 
 
 def procesar_archivo(file_path: str):
@@ -292,7 +276,9 @@ def procesar_archivo(file_path: str):
         with pd.ExcelWriter(output_path) as writer:
             detalle.to_excel(writer, index=False, sheet_name="Detalle")
         formatear_excel(output_path)
-        copiar_tabla_al_portapapeles(detalle)
+        imagen_tabla = _generar_imagen_tabla(detalle)
+        jpg_path = base + "_procesado.jpg"
+        guardar_tabla_como_jpg(imagen_tabla, jpg_path)
     except Exception as e:
         messagebox.showerror("Error al guardar el Excel", str(e))
         return
@@ -302,9 +288,9 @@ def procesar_archivo(file_path: str):
 
     messagebox.showinfo(
         "Proceso completado",
-        f"Archivo generado:\n{output_path}\n\n"
-        f"La tabla ha sido copiada al portapapeles como imagen.\n"
-        f"Pegala en WhatsApp para compartir.\n\n"
+        f"Archivos generados:\n"
+        f"  • Excel: {output_path}\n"
+        f"  • Imagen: {jpg_path}\n\n"
         f"Total general: C$ {total:.2f}",
     )
 
@@ -314,45 +300,35 @@ def procesar_archivo(file_path: str):
 # ==========================
 
 
-def buscar_orderdetails() -> str | None:
-    """Busca orderDetails.csv en las carpetas Descargas o Downloads."""
-    posibles_rutas = [
-        os.path.expanduser("~/Downloads/orderDetails.csv"),
-        os.path.expanduser("~/Descargas/orderDetails.csv"),
-    ]
-
-    for ruta in posibles_rutas:
-        if os.path.exists(ruta):
-            return ruta
-
-    return None
-
-
 def seleccionar_y_procesar():
-    file_path = buscar_orderdetails()
-    if file_path:
-        procesar_archivo(file_path)
-    else:
-        messagebox.showerror(
-            "Archivo no encontrado",
-            "No se encontró el archivo 'orderDetails.csv' en las carpetas Descargas o Downloads.",
-        )
+    file_path = filedialog.askopenfilename(
+        title="Seleccionar archivo de PedidosYa",
+        filetypes=[
+            ("Archivos de PedidosYa", "*.csv *.xls *.xlsx"),
+            ("CSV", "*.csv"),
+            ("Excel", "*.xls *.xlsx"),
+            ("Todos", "*.*"),
+        ],
+        initialdir=os.path.expanduser("~/Downloads"),
+    )
+    if not file_path:
+        return
+    procesar_archivo(file_path)
 
 
 def main():
     root = tk.Tk()
     root.title("Procesar reportes PedidosYa - Pollos Asados KM9")
-    root.geometry("500x220")
+    root.geometry("520x230")
 
     label = tk.Label(
         root,
         text=(
             "Procesador de reportes PedidosYa\n\n"
-            "Se procesará automáticamente el archivo 'orderDetails.csv'\n"
-            "desde las carpetas Descargas o Downloads.\n\n"
-            "Se generará un Excel con la tabla Detalle:\n"
-            "   Número de pedido, Fecha, Producto, Cantidad,\n"
-            "   Precio unitario, Subtotal y Entregado."
+            "Hacé clic para seleccionar el archivo CSV/Excel de PedidosYa.\n"
+            "Se generarán dos archivos en la misma carpeta:\n"
+            "   • *_procesado.xlsx  (Excel con tabla Detalle)\n"
+            "   • *_procesado.jpg   (Imagen de la tabla)"
         ),
         justify="left",
     )
@@ -360,7 +336,7 @@ def main():
 
     boton = tk.Button(
         root,
-        text="Buscar y procesar orderDetails.csv",
+        text="Seleccionar archivo y procesar",
         command=seleccionar_y_procesar,
         width=35,
         height=2,
