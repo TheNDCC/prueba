@@ -1,4 +1,17 @@
 .venv
+.env/
 output/
 csv/
-# renaming compatibility note (no direct changes here, just placeholder if needed)
+
+# PyInstaller / build artifacts
+build/
+dist/
+*.spec.bak
+*.pyc
+__pycache__/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

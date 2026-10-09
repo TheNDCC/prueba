@@ -12,7 +12,7 @@ if [ -f ".env/bin/activate" ]; then
 elif [ -f ".venv/bin/activate" ]; then
   . .venv/bin/activate
 elif [ -f "env/bin/activate" ]; then
-  . env/bin/activate
+  . .env/bin/activate
 fi
 
 # Seleccionar intérprete Python disponible
@@ -25,8 +25,28 @@ else
   exit 1
 fi
 
-# Ejecutar el programa (pasa cualquier argumento recibido)
-"$PY" peya.py "$@"
+# Seleccionar script a ejecutar: peya (por defecto) | promicsyst | prueba
+SCRIPT="${1:-peya}"
+shift 2>/dev/null || true
+
+case "$SCRIPT" in
+  peya)       FILE="peya.py" ;;
+  promicsyst) FILE="promicsyst.py" ;;
+  prueba)     FILE="prueba.py" ;;
+  *)
+    echo "Script no reconocido: $SCRIPT"
+    echo "Uso: $0 [peya|promicsyst|prueba]"
+    exit 1
+    ;;
+esac
+
+if [ ! -f "$FILE" ]; then
+  echo "No se encontró $FILE en $script_dir"
+  exit 1
+fi
+
+# Ejecutar el programa (pasa cualquier argumento recibido al script)
+"$PY" "$FILE" "$@"
 
 # Pausa similar a "pause" de Windows
 read -n1 -rsp $'Presione cualquier tecla para continuar...\n' || true

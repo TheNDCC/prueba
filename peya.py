@@ -37,29 +37,40 @@ COLUMN_WIDTHS = [18, 16, 25, 10, 18, 15, 12]
 # ==========================
 #  LISTA DE PRECIOS
 # ==========================
+# Para agregar o ajustar productos del menú, editar este dict.
+# El match se hace por subcadena (clave in nombre_normalizado);
+# si agregás variantes, poné las más específicas antes.
 
 PRECIOS = {
     "pollo asado entero": 340,
     "pollo asados entero": 340,
-    "pollo asado medio": 170,
-    "medio pollo asado": 170,
     "pollo rostizado entero": 380,
     "pollo rostizado medio": 190,
+    "pollo asado medio": 170,
+    "medio pollo asado": 170,
     "nachos supremos de res": 150,
     "nachos supremos mixtos": 250,
     "alitas rostizada 2 libras": 240,
     "alitas rostizada 1 libra": 120,
     "puyazo": 200,
     "churrasco": 200,
-    "cerdo asado": 160,
-    "carne asada": 180,
+    "cerdo asado": 180,
+    "carne asada": 220,
     "agua alpina 600 ml": 30,
     "gaseosa 355 ml": 30,
     "gaseosa 2 lt": 70,
     "coca cola 2lt": 70,
-    "gaseosa 3 lt": 90,
-    "coca cola 3lt": 90,
+    "gaseosa 3 lt": 120,
+    "coca cola 3lt": 120,
 }
+
+# Cantidad + espacios + nombre. Ej: "2  Gaseosa 2 lt".
+_RE_ITEM = re.compile(r"^(\d+)\s+(.+)$")
+# Coma + espacios + (lookahead) dígitos + espacio + no-espacio.
+# Parte artículos en "N Producto, M Producto" sin romper nombres con coma
+# (p.ej. "Coca Cola, 2lt" se mantiene junto porque después de la coma
+# no viene "dígito + espacio").
+_RE_SEPARAR_ITEMS = re.compile(r",\s+(?=\d+\s+\S)")
 
 
 def _normalizar_texto(texto: str) -> str:
@@ -70,10 +81,19 @@ def _normalizar_texto(texto: str) -> str:
 
 
 def find_price(name: str):
-    """Devuelve el precio según el nombre del producto usando coincidencia parcial."""
+    """Devuelve el precio según el nombre del producto (None si no hay match).
+
+    Solo hace match en una dirección (clave in nombre) y con frontera de
+    palabra (`\\b`) para que un nombre parcial como "pollo asado" o un
+    typo como "pollo asado medios" no se confundan con un producto más
+    largo (p.ej. "pollo asado entero" / "pollo asado medio"). Si el
+    producto no está en el menú, devuelve None y el procesador avisará
+    al final.
+    """
     n = _normalizar_texto(name)
     for clave, valor in PRECIOS.items():
-        if clave in n or n in clave:
+        patron = r"\b" + re.escape(clave) + r"\b"
+        if re.search(patron, n):
             return valor
     return None
 
@@ -125,19 +145,27 @@ def formatear_excel(output_path: str):
 
 
 def _parse_articulos(articulos: str) -> list[tuple[int, str]]:
-    """Parsea cadena de artículos (mejora: maneja comas en nombres)."""
+    """Parsea cadena de artículos del tipo `N Producto, M Producto, ...`.
+
+    Parte la cadena solo en comas que parecen iniciar un nuevo item
+    (cantidad + espacio + nombre), evitando romper nombres de producto
+    que contengan comas (p.ej. `Coca Cola, 2lt`).
+    """
+    if not isinstance(articulos, str):
+        return []
+    partes = _RE_SEPARAR_ITEMS.split(articulos)
     items = []
-    for item in articulos.split(","):
+    for item in partes:
         item = item.strip()
         if not item:
             continue
-        match = re.match(r"^(\d+)\s+(.+)$", item)
+        match = _RE_ITEM.match(item)
         if match:
             cantidad = int(match.group(1))
             nombre = match.group(2).strip()
         else:
             cantidad = 1
-            nombre = item.strip()
+            nombre = item
         items.append((cantidad, nombre))
     return items
 
@@ -220,7 +248,7 @@ def procesar_archivo(file_path: str):
         return
 
     # 2) Verificar que existan las columnas que necesitamos
-    columnas_necesarias = ["Nro de pedido", "Fecha del pedido", "Artículos"]
+    columnas_necesarias = ["Nro de pedido", "Fecha del pedido", "Artículos del pedido"]
     for col in columnas_necesarias:
         if col not in df.columns:
             messagebox.showerror(
@@ -234,12 +262,13 @@ def procesar_archivo(file_path: str):
     tiene_estado = "Estado del pedido" in df.columns
 
     filas = []
+    sin_match: list[tuple[str, str]] = []
 
     for _, fila in df.iterrows():
         pedido = fila.get("Nro de pedido", "")
         fecha = fila.get("Fecha del pedido", "")
         estado = fila.get("Estado del pedido", "") if tiene_estado else ""
-        articulos = fila.get("Artículos", "")
+        articulos = fila.get("Artículos del pedido", "")
 
         if not isinstance(articulos, str) or not articulos.strip():
             continue
@@ -247,6 +276,9 @@ def procesar_archivo(file_path: str):
         for cantidad, nombre in _parse_articulos(articulos):
             precio = find_price(nombre)
             subtotal = cantidad * precio if precio is not None else None
+
+            if precio is None:
+                sin_match.append((str(pedido), nombre))
 
             filas.append(
                 {
@@ -285,6 +317,24 @@ def procesar_archivo(file_path: str):
 
     # 4) Calcular total general
     total = detalle["Subtotal (C$)"].sum(skipna=True)
+
+    # 5) Avisar si hubo productos sin precio (causa típica de discrepancia)
+    if sin_match:
+        nombres_unicos = sorted({nombre for _, nombre in sin_match})
+        listado = "\n".join(
+            f"  • {nombre}  (en pedido {pedido})"
+            for pedido, nombre in sin_match[:20]
+        )
+        sufijo = "" if len(sin_match) <= 20 else f"\n  … y {len(sin_match) - 20} más."
+        messagebox.showwarning(
+            "Productos sin precio",
+            "Los siguientes artículos no tienen precio en el menú y "
+            "quedaron con subtotal vacío:\n\n"
+            f"{listado}{sufijo}\n\n"
+            f"Productos únicos sin match: {', '.join(nombres_unicos)}\n\n"
+            "Para incluirlos, agregalos al diccionario PRECIOS en peya.py "
+            "y volvé a procesar el archivo.",
+        )
 
     messagebox.showinfo(
         "Proceso completado",
