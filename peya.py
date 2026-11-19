@@ -33,6 +33,11 @@ TOTAL_FILL = PatternFill(start_color="D9E2F3", end_color="D9E2F3", fill_type="so
 TOTAL_FONT = Font(bold=True, size=11)
 
 COLUMN_WIDTHS = [18, 16, 25, 10, 18, 15, 12]
+RESUMEN_COLUMN_WIDTHS = [32, 12, 18]
+
+# Altura en pulgadas de cada fila de tabla en la imagen (define también
+# la separación de dos filas entre Detalle y Resumen).
+ALTURA_FILA_IMAGEN = 0.5
 
 # ==========================
 #  LISTA DE PRECIOS
@@ -44,16 +49,16 @@ COLUMN_WIDTHS = [18, 16, 25, 10, 18, 15, 12]
 PRECIOS = {
     "pollo asado entero": 340,
     "pollo asados entero": 340,
-    "pollo rostizado entero": 380,
-    "pollo rostizado medio": 190,
+    "pollo rostizado entero": 400,
+    "pollo rostizado medio": 200,
     "pollo asado medio": 170,
     "medio pollo asado": 170,
     "nachos supremos de res": 150,
     "nachos supremos mixtos": 250,
     "alitas rostizada 2 libras": 240,
     "alitas rostizada 1 libra": 120,
-    "puyazo": 200,
-    "churrasco": 200,
+    "puyazo": 300,
+    "churrasco": 260,
     "cerdo asado": 180,
     "carne asada": 220,
     "agua alpina 600 ml": 30,
@@ -80,6 +85,16 @@ def _normalizar_texto(texto: str) -> str:
     return "".join(c for c in texto if unicodedata.category(c) != "Mn")
 
 
+def _clave_precio(name: str):
+    """Devuelve la clave de PRECIOS que matcheó con el nombre (None si no hay)."""
+    n = _normalizar_texto(name)
+    for clave in PRECIOS:
+        patron = r"\b" + re.escape(clave) + r"\b"
+        if re.search(patron, n):
+            return clave
+    return None
+
+
 def find_price(name: str):
     """Devuelve el precio según el nombre del producto (None si no hay match).
 
@@ -90,12 +105,8 @@ def find_price(name: str):
     producto no está en el menú, devuelve None y el procesador avisará
     al final.
     """
-    n = _normalizar_texto(name)
-    for clave, valor in PRECIOS.items():
-        patron = r"\b" + re.escape(clave) + r"\b"
-        if re.search(patron, n):
-            return valor
-    return None
+    clave = _clave_precio(name)
+    return PRECIOS[clave] if clave is not None else None
 
 
 # ==========================
@@ -144,6 +155,43 @@ def formatear_excel(output_path: str):
     wb.save(output_path)
 
 
+def formatear_resumen(output_path: str):
+    """Aplica formato a la hoja Resumen y agrega su fila TOTAL."""
+    wb = load_workbook(output_path)
+    if "Resumen" not in wb.sheetnames:
+        return
+    ws = wb["Resumen"]
+
+    for col in range(1, ws.max_column + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.fill = HEADER_FILL
+        cell.font = HEADER_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = THIN_BORDER
+
+    for row in range(2, ws.max_row + 1):
+        for col in range(1, ws.max_column + 1):
+            cell = ws.cell(row=row, column=col)
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for i, width in enumerate(RESUMEN_COLUMN_WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    ultima_fila = ws.max_row
+    ws.append(["TOTAL", f"=SUM(B2:B{ultima_fila})", f"=SUM(C2:C{ultima_fila})"])
+    total_row = ws.max_row
+
+    for col in range(1, ws.max_column + 1):
+        cell = ws.cell(row=total_row, column=col)
+        cell.fill = TOTAL_FILL
+        cell.font = TOTAL_FONT
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = THIN_BORDER
+
+    wb.save(output_path)
+
+
 def _parse_articulos(articulos: str) -> list[tuple[int, str]]:
     """Parsea cadena de artículos del tipo `N Producto, M Producto, ...`.
 
@@ -170,34 +218,61 @@ def _parse_articulos(articulos: str) -> list[tuple[int, str]]:
     return items
 
 
-def _generar_imagen_tabla(detalle: pd.DataFrame) -> Image.Image:
-    """Genera una imagen PIL con la tabla Detalle + fila TOTAL."""
-    total = detalle["Subtotal (C$)"].sum(skipna=True)
+def _clave_resumen(nombre: str) -> tuple[str, str]:
+    """Devuelve (clave de agrupación, nombre visible) para un producto."""
+    clave = _clave_precio(nombre)
+    if clave is not None:
+        return clave, clave.title()
+    normalizado = _normalizar_texto(nombre)
+    return normalizado, normalizado.title()
 
-    df_con_total = pd.concat(
-        [
-            detalle,
-            pd.DataFrame(
-                [["TOTAL", "", "", "", "", total, ""]],
-                columns=detalle.columns,
-            ),
-        ],
-        ignore_index=True,
+
+def _agrupar_por_producto(detalle: pd.DataFrame) -> pd.DataFrame:
+    """Resume Cantidad y Subtotal por producto (agrupando por clave del menú)."""
+    claves = []
+    nombres_visibles = []
+    for producto in detalle["Producto"]:
+        clave, nombre_visible = _clave_resumen(str(producto))
+        claves.append(clave)
+        nombres_visibles.append(nombre_visible)
+
+    agrupado = detalle.assign(
+        _clave=claves,
+        _nombre_visible=nombres_visibles,
     )
 
-    fig, ax = plt.subplots(figsize=(14, max(3, len(df_con_total) * 0.5)))
+    resumen = (
+        agrupado.groupby("_clave", as_index=False)
+        .agg(
+            Producto=("_nombre_visible", "first"),
+            Cantidad=("Cantidad", "sum"),
+            Subtotal=("Subtotal (C$)", lambda s: s.sum(min_count=1)),
+        )
+        .rename(columns={"Subtotal": "Subtotal (C$)"})
+    )
+
+    resumen["Cantidad"] = resumen["Cantidad"].astype(int)
+    resumen = resumen.sort_values(
+        by=["Cantidad", "Producto"], ascending=[False, True]
+    ).reset_index(drop=True)
+
+    return resumen[["Producto", "Cantidad", "Subtotal (C$)"]]
+
+
+def _dibujar_tabla(ax, df_con_total: pd.DataFrame, titulo: str) -> None:
+    """Dibuja una tabla que ocupa todo el axes, con encabezado y fila TOTAL."""
     ax.axis("off")
+    ax.set_title(titulo, fontsize=12, fontweight="bold", loc="left", pad=6)
 
     tabla = ax.table(
         cellText=df_con_total.values,
         colLabels=df_con_total.columns,
         cellLoc="center",
-        loc="center",
         colColours=["#4472C4"] * len(df_con_total.columns),
+        bbox=[0, 0, 1, 1],
     )
     tabla.auto_set_font_size(False)
     tabla.set_fontsize(9)
-    tabla.scale(1.2, 1.5)
 
     num_filas = len(df_con_total)
     for key, cell in tabla.get_celld().items():
@@ -208,7 +283,65 @@ def _generar_imagen_tabla(detalle: pd.DataFrame) -> Image.Image:
             cell.set_text_props(fontweight="bold")
         cell.set_edgecolor("#cccccc")
 
-    plt.tight_layout()
+
+def _generar_imagen_reporte(
+    detalle: pd.DataFrame, resumen: pd.DataFrame
+) -> Image.Image:
+    """Genera una imagen PIL con la tabla Detalle y el Resumen por producto."""
+    total_detalle = detalle["Subtotal (C$)"].sum(skipna=True)
+
+    df_detalle = pd.concat(
+        [
+            detalle,
+            pd.DataFrame(
+                [["TOTAL", "", "", "", "", total_detalle, ""]],
+                columns=detalle.columns,
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    total_resumen = resumen["Subtotal (C$)"].sum(skipna=True)
+    cantidad_resumen = int(resumen["Cantidad"].sum())
+
+    df_resumen = pd.concat(
+        [
+            resumen,
+            pd.DataFrame(
+                [["TOTAL", cantidad_resumen, total_resumen]],
+                columns=resumen.columns,
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    alto_detalle = (len(df_detalle) + 1) * ALTURA_FILA_IMAGEN
+    alto_resumen = (len(df_resumen) + 1) * ALTURA_FILA_IMAGEN
+    separacion = 2 * ALTURA_FILA_IMAGEN
+    margen = 0.05
+
+    alto_figura = (
+        margen * 2
+        + alto_resumen
+        + separacion
+        + alto_detalle
+        + ALTURA_FILA_IMAGEN  # banda para el título del detalle
+    )
+
+    fig = plt.figure(figsize=(14, alto_figura))
+
+    y_resumen = margen
+    y_detalle = margen + alto_resumen + separacion
+
+    ax_resumen = fig.add_axes(
+        [0.02, y_resumen / alto_figura, 0.96, alto_resumen / alto_figura]
+    )
+    ax_detalle = fig.add_axes(
+        [0.02, y_detalle / alto_figura, 0.96, alto_detalle / alto_figura]
+    )
+
+    _dibujar_tabla(ax_detalle, df_detalle, "Detalle de venta")
+    _dibujar_tabla(ax_resumen, df_resumen, "Resumen por producto")
 
     img_buffer = io.BytesIO()
     plt.savefig(
@@ -231,7 +364,7 @@ def guardar_tabla_como_jpg(imagen: Image.Image, output_path: str) -> None:
 
 
 def procesar_archivo(file_path: str):
-    """Lee el archivo de PedidosYa y genera un Excel con la tabla Detalle."""
+    """Lee el archivo de PedidosYa y genera el Excel (Detalle + Resumen) y la imagen."""
 
     # 1) Leer CSV o Excel según extensión
     ext = os.path.splitext(file_path)[1].lower()
@@ -299,16 +432,19 @@ def procesar_archivo(file_path: str):
         return
 
     detalle = pd.DataFrame(filas)
+    resumen = _agrupar_por_producto(detalle)
 
-    # 3) Guardar a Excel (solo hoja Detalle, como en tu imagen)
+    # 3) Guardar a Excel (hojas Detalle + Resumen)
     base, ext = os.path.splitext(file_path)
     output_path = base + "_procesado.xlsx"
 
     try:
         with pd.ExcelWriter(output_path) as writer:
             detalle.to_excel(writer, index=False, sheet_name="Detalle")
+            resumen.to_excel(writer, index=False, sheet_name="Resumen")
         formatear_excel(output_path)
-        imagen_tabla = _generar_imagen_tabla(detalle)
+        formatear_resumen(output_path)
+        imagen_tabla = _generar_imagen_reporte(detalle, resumen)
         jpg_path = base + "_procesado.jpg"
         guardar_tabla_como_jpg(imagen_tabla, jpg_path)
     except Exception as e:
@@ -341,7 +477,7 @@ def procesar_archivo(file_path: str):
         f"Archivos generados:\n"
         f"  • Excel: {output_path}\n"
         f"  • Imagen: {jpg_path}\n\n"
-        f"Total general: C$ {total:.2f}",
+        f"Total general: C$ {total:,.2f}",
     )
 
 
@@ -377,8 +513,8 @@ def main():
             "Procesador de reportes PedidosYa\n\n"
             "Hacé clic para seleccionar el archivo CSV/Excel de PedidosYa.\n"
             "Se generarán dos archivos en la misma carpeta:\n"
-            "   • *_procesado.xlsx  (Excel con tabla Detalle)\n"
-            "   • *_procesado.jpg   (Imagen de la tabla)"
+            "   • *_procesado.xlsx  (hojas Detalle y Resumen por producto)\n"
+            "   • *_procesado.jpg   (imagen con detalle y resumen)"
         ),
         justify="left",
     )
